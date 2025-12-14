@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { supabase } from "@/lib/supabase"
+import { supabase, type User } from "@/lib/supabase"
 import DashboardLayout from "@/components/dashboard-layout"
 import { Card } from "@/components/ui/card"
-import { FileText, MessageSquare, Coins, Clock, TrendingUp, Award } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { FileText, MessageSquare, Coins, Clock, TrendingUp, Award, LogOut } from "lucide-react"
 
 export default function DashboardPage() {
   const router = useRouter()
   const [loading, setLoading] = useState(true)
-  const [user, setUser] = useState<any>(null)
+  const [userData, setUserData] = useState<User | null>(null)
 
   useEffect(() => {
     checkUser()
@@ -22,8 +23,53 @@ export default function DashboardPage() {
       router.push("/login")
       return
     }
-    setUser(session.user)
+
+    // Fetch user data from users table
+    const { data: user, error } = await supabase
+      .from("users")
+      .select("*")
+      .eq("id", session.user.id)
+      .single()
+
+    if (error) {
+      // If user not found in users table, create entry
+      if (error.code === 'PGRST116') {
+        const { data: newUser, error: insertError } = await supabase
+          .from("users")
+          .insert([{
+            id: session.user.id,
+            email: session.user.email || "",
+            full_name: session.user.user_metadata?.full_name || "User",
+            role: "user",
+            credits: 100,
+          }])
+          .select()
+          .single()
+
+        if (insertError) {
+          console.error("Error creating user entry:", insertError)
+          await supabase.auth.signOut()
+          router.push("/login")
+          return
+        }
+
+        setUserData(newUser)
+        setLoading(false)
+        return
+      }
+
+      console.error("Error fetching user data:", error)
+      router.push("/login")
+      return
+    }
+
+    setUserData(user)
     setLoading(false)
+  }
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut()
+    router.replace("/login")
   }
 
   if (loading) {
@@ -34,27 +80,31 @@ export default function DashboardPage() {
     )
   }
 
-  const stats = [
-    { label: "Resumes Analyzed", value: "127", icon: FileText, trend: "+12%" },
-    { label: "Mock Interviews", value: "34", icon: MessageSquare, trend: "+8%" },
-    { label: "Credits Remaining", value: "850", icon: Coins, trend: "-15" },
-    { label: "Hours Saved", value: "48", icon: Clock, trend: "+24%" },
-  ]
+  if (!userData) {
+    return null
+  }
 
-  const recentActivity = [
-    { action: "Resume analyzed for Software Engineer role", time: "2 hours ago", type: "ats" },
-    { action: "Completed mock interview for Data Analyst", time: "5 hours ago", type: "interview" },
-    { action: "Generated career roadmap for ML Engineer", time: "1 day ago", type: "roadmap" },
-    { action: "Created LinkedIn profile content", time: "2 days ago", type: "social" },
-    { action: "Built resume using template", time: "3 days ago", type: "resume" },
+  const stats = [
+    { label: "Resumes Analyzed", value: "0", icon: FileText, trend: "0%" },
+    { label: "Mock Interviews", value: "0", icon: MessageSquare, trend: "0%" },
+    { label: "Credits Remaining", value: userData.credits.toString(), icon: Coins, trend: "Active" },
+    { label: "Account Type", value: userData.role === "admin" ? "Admin" : "User", icon: Clock, trend: "Active" },
   ]
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold tracking-tight text-balance">Welcome Back!</h1>
-          <p className="text-muted-foreground mt-1">Here's what's happening with your AI tools today</p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight text-balance">
+              Welcome Back, {userData.full_name}!
+            </h1>
+            <p className="text-muted-foreground mt-1">{userData.email}</p>
+          </div>
+          <Button variant="outline" onClick={handleLogout}>
+            <LogOut className="mr-2 h-4 w-4" />
+            Logout
+          </Button>
         </div>
 
         {/* Stats Grid */}
@@ -73,22 +123,28 @@ export default function DashboardPage() {
           ))}
         </div>
 
-        {/* Recent Activity */}
-        <Card className="p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold">Recent Activity</h2>
-            <TrendingUp className="h-5 w-5 text-primary" />
-          </div>
-          <div className="space-y-4">
-            {recentActivity.map((activity, index) => (
-              <div key={index} className="flex items-start gap-4 pb-4 border-b border-border last:border-0 last:pb-0">
-                <div className="h-2 w-2 bg-primary rounded-full mt-2" />
-                <div className="flex-1">
-                  <p className="text-sm font-medium">{activity.action}</p>
-                  <p className="text-xs text-muted-foreground mt-1">{activity.time}</p>
-                </div>
-              </div>
-            ))}
+        {/* Welcome Message */}
+        <Card className="p-6 bg-gradient-to-br from-primary/10 to-accent/10 border-primary/20">
+          <div className="flex items-start gap-4">
+            <div className="h-12 w-12 rounded-full bg-primary/20 flex items-center justify-center flex-shrink-0">
+              <Award className="h-6 w-6 text-primary" />
+            </div>
+            <div className="flex-1">
+              <h2 className="text-xl font-semibold mb-2">Getting Started</h2>
+              <p className="text-muted-foreground mb-4">
+                You have <span className="font-bold text-foreground">{userData.credits} credits</span> available. 
+                Use them to access AI-powered tools for resume analysis, mock interviews, career planning, and more.
+              </p>
+              {userData.role === "admin" && (
+                <Button 
+                  variant="default" 
+                  onClick={() => router.push("/admin")}
+                  className="mt-2"
+                >
+                  Go to Admin Portal
+                </Button>
+              )}
+            </div>
           </div>
         </Card>
 
